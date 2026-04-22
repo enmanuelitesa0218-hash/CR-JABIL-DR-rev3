@@ -406,17 +406,19 @@ function initNavigation() {
                 document.getElementById(targetId).classList.add('active');
                 if (targetId === 'dashboard-view') renderDashboard();
                 if (targetId === 'grafica-view') renderChart();
-                if (targetId === 'historial-view' || targetId === 'tecnicos-view') {
-                    // Actualizar selector de técnicos en historial y mantenimiento
+                if (targetId === 'historial-view' || targetId === 'tecnicos-view' || targetId === 'dashboard-view') {
+                    // Actualizar selectores de técnicos en todas las vistas
                     ['hist-tech-filter', 'delete-tech-filter'].forEach(id => {
                         const hf = document.getElementById(id);
                         if (hf) {
+                            const cur = hf.value;
                             hf.innerHTML = '<option value="">Todos</option>';
                             appTechnicians.forEach(t => {
                                 const o = document.createElement('option');
                                 o.value = t.id; o.textContent = t.name;
                                 hf.appendChild(o);
                             });
+                            if (cur) hf.value = cur;
                         }
                     });
                     if (targetId === 'historial-view') renderHistorial();
@@ -727,19 +729,22 @@ function initAdmin() {
     }
 
     if (btnDelPeriod) {
-        console.log("Btn delete period detected");
         btnDelPeriod.onclick = async () => {
             const start = document.getElementById('delete-date-start').value;
             const end = document.getElementById('delete-date-end').value;
             const techFilter = document.getElementById('delete-tech-filter').value;
             const hourFilter = document.getElementById('delete-hour-filter').value;
+            const qty = parseInt(document.getElementById('delete-quantity').value) || 0;
 
             if (!start || !end) { alert("Selecciona ambas fechas (Inicio y Fin)."); return; }
             if (start > end) { alert("La fecha de inicio no puede ser mayor a la de fin."); return; }
 
-            let confirmMsg = `¿Borrar registros del periodo ${start} al ${end}?`;
-            if (techFilter) confirmMsg += `\nSolo para el técnico: ${techFilter}`;
-            if (hourFilter) confirmMsg += `\nSolo en la hora: ${hourFilter}`;
+            let confirmMsg = qty > 0 
+                ? `¿REDUCIR ${qty} unidades de los registros seleccionados?`
+                : `¿BORRAR TODO el contenido de los registros seleccionados?`;
+            
+            if (techFilter) confirmMsg += `\nTécnico: ${techFilter}`;
+            if (hourFilter) confirmMsg += `\nHora: ${hourFilter}`;
 
             if (!confirm(confirmMsg)) return;
 
@@ -748,39 +753,54 @@ function initAdmin() {
                     const updates = {};
                     const safeHourFilter = hourFilter ? hourFilter.replace(/:/g, '-').replace(/ /g, '_') : null;
 
-                    Object.keys(productivityData).forEach(day => {
+                    // Necesitamos obtener los datos frescos de Firebase si vamos a reducir por cantidad
+                    // para saber qué IDs de entrada borrar exactamente.
+                    const snapshot = await window.db.ref('productivity').once('value');
+                    const raw = snapshot.val() || {};
+
+                    Object.keys(raw).forEach(day => {
                         if (day >= start && day <= end) {
-                            Object.keys(productivityData[day] || {}).forEach(techId => {
+                            Object.keys(raw[day] || {}).forEach(techId => {
                                 if (techFilter && techId !== techFilter) return;
 
-                                Object.keys(productivityData[day][techId] || {}).forEach(rawHourKey => {
-                                    // Normalizar para comparar si se especificó una hora
+                                Object.keys(raw[day][techId] || {}).forEach(rawHourKey => {
                                     const normalizedKey = rawHourKey.replace(/_-_24-00$/, '_-_00-00');
                                     const safeHourToCompare = safeHourFilter ? safeHourFilter.replace(/_-_24-00$/, '_-_00-00') : null;
 
                                     if (safeHourToCompare && normalizedKey !== safeHourToCompare) return;
 
-                                    // Si llegamos aquí, esta entrada debe borrarse
-                                    updates[`${day}/${techId}/${rawHourKey}`] = null;
-                                    delete productivityData[day][techId][rawHourKey];
+                                    const hourData = raw[day][techId][rawHourKey];
+                                    if (!hourData) return;
+
+                                    if (qty > 0) {
+                                        // REDUCIR N UNIDADES
+                                        const keys = Object.keys(hourData); // Firebase keys de .push()
+                                        const toDelete = keys.slice(-qty); // Tomar las últimas N
+                                        toDelete.forEach(k => {
+                                            updates[`${day}/${techId}/${rawHourKey}/${k}`] = null;
+                                        });
+                                    } else {
+                                        // BORRAR TODO EL SLOT
+                                        updates[`${day}/${techId}/${rawHourKey}`] = null;
+                                    }
                                 });
                             });
                         }
                     });
 
                     if (Object.keys(updates).length === 0) {
-                        showToast("No se encontraron registros que coincidan", "error");
+                        showToast("No se encontró data para borrar", "error");
                         return;
                     }
 
                     await window.db.ref('productivity').update(updates);
-                    showToast("Registros borrados con éxito", "success");
-                    renderDashboard();
+                    showToast(qty > 0 ? "Unidades reducidas con éxito" : "Registros borrados", "success");
+                    document.getElementById('delete-quantity').value = '';
                 } else {
                     showToast("Sin conexión a Firebase", "error");
                 }
             } catch (err) {
-                console.error("Error al borrar periodo:", err);
+                console.error("Error en operación:", err);
                 alert("Error: " + err.message);
             }
         };
