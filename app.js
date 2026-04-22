@@ -471,6 +471,7 @@ function initForm() {
     if (scanner) {
         scanner.addEventListener('keypress', async (e) => {
             if (e.key !== 'Enter') return;
+            e.preventDefault(); // EVITAR QUE EL FORMULARIO SE ENVÍE DOS VECES (scanner + submit)
             const val = scanner.value.trim();
             if (!val) return;
             const found = appTechnicians.find(t => t.id === val);
@@ -813,19 +814,34 @@ function initAdmin() {
 // EXPORT
 // ------------------------------------------
 function exportToExcel() {
-    let csv = "\uFEFFFecha,Técnico,Hora,Unidades\n";
-    Object.keys(productivityData).forEach(d => {
+    // Encabezado detallado: Incluye Serial y Hora Exacta
+    let csv = "\uFEFFFecha,Técnico,Franja Horaria,Serial,Hora Registro\n";
+    
+    Object.keys(productivityData).sort().reverse().forEach(d => {
         Object.keys(productivityData[d] || {}).forEach(tid => {
+            const tech = appTechnicians.find(t => t.id === tid);
+            const techName = tech ? tech.name : tid;
+
             Object.keys(productivityData[d][tid] || {}).forEach(h => {
-                const count = (productivityData[d][tid][h] || []).length;
-                csv += `"${d}","${tid}","${h}",${count}\n`;
+                const entries = productivityData[d][tid][h];
+                if (!Array.isArray(entries)) return;
+
+                entries.forEach(entry => {
+                    const serial = entry.serial || "Manual";
+                    const timestamp = entry.timestamp || "--:--";
+                    // Limpiar la clave de la hora para el reporte
+                    const hourRange = h.replace(/--/g, ':').replace(/_-_/g, ' - ').replace(/-/g, ':');
+                    
+                    csv += `"${d}","${techName}","${hourRange}","${serial}","${timestamp}"\n`;
+                });
             });
         });
     });
+
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
     const link = document.createElement("a");
     link.href = URL.createObjectURL(blob);
-    link.download = `productividad_${new Date().toISOString().split('T')[0]}.csv`;
+    link.download = `reporte_detallado_jabil_${new Date().toISOString().split('T')[0]}.csv`;
     link.click();
 }
 
