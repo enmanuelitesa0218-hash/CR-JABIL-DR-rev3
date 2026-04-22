@@ -43,6 +43,7 @@ function setupFirebaseListeners() {
         const data = snapshot.val();
         appTechnicians = data ? Object.values(data) : [];
         localStorage.setItem('jabil_techs_list', JSON.stringify(appTechnicians));
+        populateAllTechSelects(); // Nueva función centralizada
         refreshUI();
     }, (error) => {
         console.error("Error leyendo técnicos:", error);
@@ -161,8 +162,36 @@ async function pushProductivityEntries(day, techId, hour, newEntries) {
 // ------------------------------------------
 // UI Helpers
 // ------------------------------------------
+function populateAllTechSelects() {
+    const selects = ['tech-select', 'hist-tech-filter', 'delete-tech-filter', 'downtime-tech-select'];
+    selects.forEach(id => {
+        const el = document.getElementById(id);
+        if (!el) return;
+        const currentVal = el.value;
+        
+        // Limpiar
+        el.innerHTML = '';
+        
+        // Agregar opción por defecto según el tipo de select
+        if (id.includes('filter')) {
+            el.innerHTML = '<option value="">Todos los técnicos</option>';
+        } else {
+            el.innerHTML = '<option value="" disabled selected>Selecciona técnico...</option>';
+        }
+
+        // Poblar
+        appTechnicians.forEach(t => {
+            const opt = document.createElement('option');
+            opt.value = t.id;
+            opt.textContent = t.name;
+            el.appendChild(opt);
+        });
+
+        if (currentVal) el.value = currentVal;
+    });
+}
+
 function refreshUI() {
-    if (window.refreshTechSelect) window.refreshTechSelect();
     if (window.renderAdminTable) window.renderAdminTable();
     renderDashboard();
 }
@@ -185,7 +214,7 @@ function updateKPIs() {
     const monthPrefix = today.substring(0, 7);
 
     let shiftLeader = { name: "---", count: 0 };
-    let monthLeader = { name: "---", count: 0 };
+    let monthLeader = { name: "---", count: 0, photo: null };
     let totalToday = 0;
     const dailyTotals = {};
     const monthlyTotals = {};
@@ -215,7 +244,11 @@ function updateKPIs() {
     Object.keys(monthlyTotals).forEach(tid => {
         if (monthlyTotals[tid] > monthLeader.count) {
             const t = appTechnicians.find(t => t.id === tid);
-            monthLeader = { name: t ? t.name : tid, count: monthlyTotals[tid] };
+            monthLeader = { 
+                name: t ? t.name : tid, 
+                count: monthlyTotals[tid],
+                photo: t ? t.photo : null
+            };
         }
     });
 
@@ -267,6 +300,14 @@ function updateKPIs() {
     set('shift-leader-count', `${shiftLeader.count} unidades`);
     set('month-leader-name', monthLeader.name);
     set('month-leader-count', `${monthLeader.count} unidades`);
+
+    // Actualizar foto del líder del mes
+    const photoContainer = document.getElementById('month-leader-photo');
+    if (photoContainer) {
+        photoContainer.innerHTML = monthLeader.photo 
+            ? `<img src="${monthLeader.photo}" style="width:100%; height:100%; object-fit:cover;">`
+            : '<i class="fa-solid fa-user" style="font-size:2rem; opacity:0.3;"></i>';
+    }
 }
 
 function updateTotalGlobal() {
@@ -294,6 +335,13 @@ document.addEventListener('DOMContentLoaded', () => {
     initForm();
     initAdmin();
     initHistorial();
+
+    // Poblar inicial con caché si existe
+    const cached = localStorage.getItem('jabil_techs_list');
+    if (cached) {
+        appTechnicians = JSON.parse(cached);
+        populateAllTechSelects();
+    }
 
     if (localStorage.getItem('jabil_theme') === 'dark') {
         document.body.setAttribute('data-theme', 'dark');
@@ -412,27 +460,16 @@ function initNavigation() {
                 btn.classList.add('active');
                 views.forEach(v => v.classList.remove('active'));
                 document.getElementById(targetId).classList.add('active');
+                
+                // Asegurar que los técnicos aparezcan al navegar
+                populateAllTechSelects();
+
                 if (targetId === 'dashboard-view') renderDashboard();
-                if (targetId === 'grafica-view') renderChart();
-                if (targetId === 'historial-view' || targetId === 'tecnicos-view' || targetId === 'dashboard-view' || targetId === 'paradas-view') {
-                    // Actualizar selectores de técnicos en todas las vistas
-                    ['hist-tech-filter', 'delete-tech-filter', 'downtime-tech-select'].forEach(id => {
-                        const hf = document.getElementById(id);
-                        if (hf) {
-                            const cur = hf.value;
-                            hf.innerHTML = '<option value="" disabled selected>Selecciona técnico</option>';
-                            if (id !== 'downtime-tech-select') hf.innerHTML = '<option value="">Todos</option>';
-                            
-                            appTechnicians.forEach(t => {
-                                const o = document.createElement('option');
-                                o.value = t.id; o.textContent = t.name;
-                                hf.appendChild(o);
-                            });
-                            if (cur) hf.value = cur;
-                        }
-                    });
-                    if (targetId === 'historial-view') renderHistorial();
+                if (targetId === 'grafica-view') {
+                    renderChart();
+                    renderDowntimeChart();
                 }
+                if (targetId === 'historial-view') renderHistorial();
             };
             if (targetId === 'tecnicos-view') window.showAdminAuthModal(action);
             else action();
@@ -666,9 +703,16 @@ function renderChart() {
 
 function renderDowntimeChart() {
     const canvas = document.getElementById('downtimeChart');
-    if (!canvas) return;
+    if (!canvas) {
+        console.warn("Canvas 'downtimeChart' no encontrado.");
+        return;
+    }
     
-    const day = document.getElementById('filter-date-start')?.value || new Date().toISOString().split('T')[0];
+    // Obtener día actual o del filtro
+    const day = document.getElementById('filter-date')?.value || 
+                document.getElementById('hist-date-start')?.value || 
+                new Date().toISOString().split('T')[0];
+
     const dataByHour = globalHours.map(h => {
         const safeH = h.replace(/:/g, '-').replace(/ /g, '_');
         const entries = downtimeData[day]?.[safeH] || {};
@@ -677,8 +721,12 @@ function renderDowntimeChart() {
         return totalMins;
     });
 
-    if (downtimeChartInstance) downtimeChartInstance.destroy();
-    downtimeChartInstance = new Chart(canvas.getContext('2d'), {
+    if (downtimeChartInstance) {
+        downtimeChartInstance.destroy();
+    }
+
+    const ctx = canvas.getContext('2d');
+    downtimeChartInstance = new Chart(ctx, {
         type: 'line',
         data: {
             labels: globalHours.map(h => h.split(' ')[0]),
@@ -686,12 +734,27 @@ function renderDowntimeChart() {
                 label: 'Minutos de Parada',
                 data: dataByHour,
                 borderColor: '#ef4444',
-                backgroundColor: 'rgba(239, 68, 68, 0.1)',
+                backgroundColor: 'rgba(239, 68, 68, 0.2)',
+                borderWidth: 3,
                 fill: true,
-                tension: 0.3
+                tension: 0.4,
+                pointRadius: 4,
+                pointBackgroundColor: '#ef4444'
             }]
         },
-        options: { responsive: true, maintainAspectRatio: false }
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            scales: {
+                y: {
+                    beginAtZero: true,
+                    title: { display: true, text: 'Minutos' }
+                }
+            },
+            plugins: {
+                legend: { position: 'top' }
+            }
+        }
     });
 }
 
@@ -713,24 +776,26 @@ function showTechPinModal(tech, ok, cancel) {
 }
 
 function initAdmin() {
-    const body = document.getElementById('tech-admin-body');
     const idIn = document.getElementById('new-tech-id');
     const nameIn = document.getElementById('new-tech-name');
     const pinIn = document.getElementById('new-tech-pin');
     const subBtn = document.getElementById('btn-add-tech');
     let editId = null;
 
-    window.renderAdminTable = () => {
+    const renderAdminTable = () => {
+        const body = document.getElementById('tech-admin-body');
         if (!body) return;
-        body.innerHTML = appTechnicians.map(t => `
+        body.innerHTML = appTechnicians.map(tech => `
             <tr>
-                <td>${t.id}</td>
-                <td>${t.name}</td>
-                <td>****</td>
-                <td style="color:#f59e0b; font-weight:600;">${t.goal || '-'}</td>
+                <td><div style="width:35px; height:35px; border-radius:50%; background:rgba(255,255,255,0.1); overflow:hidden; display:flex; align-items:center; justify-content:center;">
+                    ${tech.photo ? `<img src="${tech.photo}" style="width:100%; height:100%; object-fit:cover;">` : '<i class="fa-solid fa-user" style="font-size:1rem; opacity:0.3;"></i>'}
+                </div></td>
+                <td style="font-weight:600;">${tech.id}</td>
+                <td>${tech.name}</td>
+                <td>${tech.goal || '-'}</td>
                 <td>
-                    <button class="btn-primary" style="width:auto;padding:5px 10px;margin-right:5px;" onclick="editTech('${t.id}')"><i class="fa-solid fa-pen"></i></button>
-                    <button class="btn-danger" style="width:auto;padding:5px 10px;" onclick="deleteTech('${t.id}')"><i class="fa-solid fa-trash"></i></button>
+                    <button class="nav-btn" onclick="editTech('${tech.id}')" style="padding:5px 10px; margin:0;"><i class="fa-solid fa-pen"></i></button>
+                    <button class="nav-btn btn-danger" onclick="deleteTech('${tech.id}')" style="padding:5px 10px; margin:0;"><i class="fa-solid fa-trash"></i></button>
                 </td>
             </tr>`).join('');
     };
@@ -756,11 +821,29 @@ function initAdmin() {
 
     document.getElementById('add-tech-form').onsubmit = async (e) => {
         e.preventDefault();
+        const photoInput = document.getElementById('new-tech-photo');
+        let photoBase64 = null;
+
+        // Si estamos editando y no hay foto nueva, mantener la anterior
+        if (editId) {
+            const existing = appTechnicians.find(t => t.id === editId);
+            photoBase64 = existing?.photo || null;
+        }
+
+        if (photoInput.files && photoInput.files[0]) {
+            const reader = new FileReader();
+            photoBase64 = await new Promise((resolve) => {
+                reader.onload = (ev) => resolve(ev.target.result);
+                reader.readAsDataURL(photoInput.files[0]);
+            });
+        }
+
         const tech = {
             id: idIn.value.trim(),
             name: nameIn.value.trim(),
             pin: pinIn.value.trim(),
-            goal: parseInt(document.getElementById('new-tech-goal').value) || 0
+            goal: parseInt(document.getElementById('new-tech-goal').value) || 0,
+            photo: photoBase64
         };
         if (!tech.id || !tech.name || !tech.pin) return;
         await saveTechToFirebase(tech);
@@ -768,7 +851,8 @@ function initAdmin() {
         idIn.value = ''; idIn.disabled = false;
         nameIn.value = ''; pinIn.value = '';
         document.getElementById('new-tech-goal').value = '';
-        subBtn.innerHTML = '<i class="fa-solid fa-plus"></i>';
+        photoInput.value = ''; // Limpiar input file
+        subBtn.innerHTML = '<i class="fa-solid fa-plus"></i> Añadir Técnico';
     };
 
     // --- MANTENIMIENTO DE DATOS ---
@@ -944,32 +1028,30 @@ function renderHistorial() {
 
             Object.keys(productivityData[day][techId] || {}).forEach(hourKey => {
                 const items = productivityData[day][techId][hourKey];
-                const count = Array.isArray(items) ? items.length : 0;
-                if (count === 0) return;
+                if (!Array.isArray(items)) return;
 
-                grandTotal += count;
-
-                // Mostrar hora en formato legible
-                const hourDisplay = hourKey.replace(/--/g, ':').replace(/_-_/g, ' - ').replace(/-/g, ':');
-
-                // Eficiencia por hora (solo si hay meta, proporcional a 1/17 del turno)
+                const techGoal = parseInt(tech?.goal) || 0;
                 let effText = 'N/A';
                 let effColor = '#888';
                 if (techGoal > 0) {
-                    const goalPerHour = techGoal / 15; // 15 horas de turno
+                    const goalPerHour = techGoal / 15;
+                    const count = items.length;
                     const eff = Math.round((count / goalPerHour) * 100);
                     effText = `${eff}%`;
                     effColor = eff >= 100 ? '#22c55e' : eff >= 70 ? '#f59e0b' : '#ef4444';
                 }
 
-                rows.push(`<tr>
-                    <td>${day}</td>
-                    <td><strong>${techName}</strong></td>
-                    <td style="font-family:monospace; font-size:0.85rem;">${hourDisplay}</td>
-                    <td><span style="background:rgba(99,102,241,0.2); padding:3px 10px; border-radius:20px; font-weight:700;">${items[0].serial || 'Manual'}</span></td>
-                    <td style="color:${effColor}; font-weight:700;">${effText}</td>
-                    <td style="font-size:0.8rem; font-style:italic;">${items[0].comment || '-'}</td>
-                </tr>`);
+                items.forEach(entry => {
+                    grandTotal++;
+                    rows.push(`<tr>
+                        <td>${day}</td>
+                        <td><strong>${techName}</strong></td>
+                        <td style="font-family:monospace; font-size:0.85rem;">${entry.timestamp || hourKey.split('_-_')[1].replace(/-/g,':')}</td>
+                        <td><span style="background:rgba(99,102,241,0.2); padding:3px 10px; border-radius:20px; font-weight:700;">${entry.serial || 'Manual'}</span></td>
+                        <td style="color:${effColor}; font-weight:700;">${effText}</td>
+                        <td style="font-size:0.8rem; font-style:italic; max-width:200px; overflow:hidden; text-overflow:ellipsis;">${entry.comment || '-'}</td>
+                    </tr>`);
+                });
             });
         });
     });

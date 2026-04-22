@@ -105,9 +105,12 @@
                         </div>
 
                         <!-- KPI: MONTH LEADER -->
-                        <div class="stat-card kpi-card-purple">
+                        <div class="stat-card kpi-card-purple" style="position: relative; overflow: hidden;">
+                            <div id="month-leader-photo" style="position: absolute; right: 0; top: 0; width: 80px; height: 100%; background: rgba(255,255,255,0.1); display: flex; align-items: center; justify-content: center; overflow: hidden; border-left: 1px solid rgba(255,255,255,0.1);">
+                                <i class="fa-solid fa-user" style="font-size: 2rem; opacity: 0.3;"></i>
+                            </div>
                             <div class="stat-icon"><i class="fa-solid fa-trophy"></i></div>
-                            <div class="stat-info">
+                            <div class="stat-info" style="position: relative; z-index: 2; padding-right: 60px;">
                                 <span class="stat-label">Premio del Mes</span>
                                 <span class="stat-value" id="month-leader-name" style="font-size: 1.1rem; line-height: 1.2;">---</span>
                                 <small id="month-leader-count" style="color: var(--text-muted); font-size: 0.75rem;">0 unidades</small>
@@ -288,7 +291,7 @@
                         </div>
                         <div class="table-container">
                             <table class="productivity-table">
-                                 <thead><tr><th>Fecha</th><th>Técnico</th><th>Hora</th><th>Serial</th><th>Efic.</th><th>Comentario</th></tr></thead>
+                                 <thead><tr><th>Fecha</th><th>Técnico</th><th>Hora Reg.</th><th>Serial</th><th>Efic. Hora</th><th>Comentario</th></tr></thead>
                                 <tbody id="historial-body">
                                     <tr><td colspan="5" style="text-align:center; color:var(--text-muted);">Cargando...</td></tr>
                                 </tbody>
@@ -304,35 +307,40 @@
                         <h2>Gestión de Técnicos</h2>
                         <p class="panel-desc">Añade o edita a los reparadores del dashboard.</p>
                         
-                        <form id="add-tech-form" style="margin-bottom: 30px; display: flex; gap: 15px; align-items: flex-end; flex-wrap: wrap;">
-                            <div class="form-group" style="margin-bottom: 0; flex: 1; min-width: 100px;">
+                        <form id="add-tech-form" style="margin-bottom: 30px; display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
+                            <div class="form-group" style="margin-bottom: 0;">
                                 <label>ID (Ej: JB-123)</label>
-                                <input type="text" id="new-tech-id" required style="width: 100%; background: rgba(0,0,0,0.2); border: 1px solid var(--glass-border); color: #fff; padding: 12px; border-radius: var(--radius-md);">
+                                <input type="text" id="new-tech-id" required style="width: 100%; background: rgba(0,0,0,0.2); border: 1px solid var(--glass-border); color: #fff; padding: 10px; border-radius: var(--radius-md);">
                             </div>
-                            <div class="form-group" style="margin-bottom: 0; flex: 2; min-width: 150px;">
+                            <div class="form-group" style="margin-bottom: 0;">
                                 <label>Nombre Completo</label>
-                                <input type="text" id="new-tech-name" required style="width: 100%; background: rgba(0,0,0,0.2); border: 1px solid var(--glass-border); color: #fff; padding: 12px; border-radius: var(--radius-md);">
+                                <input type="text" id="new-tech-name" required style="width: 100%; background: rgba(0,0,0,0.2); border: 1px solid var(--glass-border); color: #fff; padding: 10px; border-radius: var(--radius-md);">
                             </div>
-                            <div class="form-group" style="margin-bottom: 0; flex: 1; min-width: 80px;">
-                                <label>PIN</label>
-                                <input type="password" id="new-tech-pin" required maxlength="6" style="width: 100%; background: rgba(0,0,0,0.2); border: 1px solid var(--glass-border); color: #fff; padding: 12px; border-radius: var(--radius-md);" placeholder="1234">
+                            <div class="form-group">
+                                <label>PIN Acceso:</label>
+                                <input type="password" id="new-tech-pin" maxlength="4" placeholder="4 dígitos" required style="width: 100%; background: rgba(0,0,0,0.2); border: 1px solid var(--glass-border); color: #fff; padding: 10px; border-radius: var(--radius-md);">
                             </div>
-                            <div class="form-group" style="margin-bottom: 0; flex: 1; min-width: 80px;">
-                                <label>Meta/Turno</label>
-                                <input type="number" id="new-tech-goal" required min="1" style="width: 100%; background: rgba(0,0,0,0.2); border: 1px solid var(--glass-border); color: #fff; padding: 12px; border-radius: var(--radius-md);" placeholder="Ej: 20">
+                            <div class="form-group">
+                                <label>Meta Unidades:</label>
+                                <input type="number" id="new-tech-goal" placeholder="Ej: 250" style="width: 100%; background: rgba(0,0,0,0.2); border: 1px solid var(--glass-border); color: #fff; padding: 10px; border-radius: var(--radius-md);">
                             </div>
-                            <button id="btn-add-tech" type="submit" class="btn-primary" style="margin: 0; width: auto; padding: 12px 20px;"><i class="fa-solid fa-plus"></i></button>
+                            <div class="form-group" style="grid-column: span 2;">
+                                <label>Foto del Técnico:</label>
+                                <input type="file" id="new-tech-photo" accept="image/*" style="width: 100%; background: rgba(0,0,0,0.2); border: 1px solid var(--glass-border); color: #fff; padding: 8px; border-radius: var(--radius-md); font-size: 0.8rem;">
+                                <small style="color: var(--text-muted); font-size: 0.7rem;">*Se recomienda una foto cuadrada pequeña.</small>
+                            </div>
+                            <button id="btn-add-tech" type="submit" class="btn-primary" style="grid-column: span 2; width: auto; padding: 12px 20px;"><i class="fa-solid fa-plus"></i> Añadir Técnico</button>
                         </form>
 
                         <div class="table-container">
-                            <table class="productivity-table" id="tech-admin-table">
+                            <table class="productivity-table">
                                 <thead>
                                     <tr>
+                                        <th>Foto</th>
                                         <th>ID</th>
                                         <th>Nombre</th>
-                                        <th>PIN</th>
-                                        <th>Meta/Turno</th>
-                                        <th>Acción</th>
+                                        <th>Meta</th>
+                                        <th>Acciones</th>
                                     </tr>
                                 </thead>
                                 <tbody id="tech-admin-body">
