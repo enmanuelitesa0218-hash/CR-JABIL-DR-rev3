@@ -11,7 +11,9 @@ const globalHours = [
 
 let appTechnicians = [];
 let productivityData = {};
+let downtimeData = {}; // Nuevo: Almacena paradas
 let productivityChartInstance = null;
+let downtimeChartInstance = null; // Nuevo: Gráfica de paradas
 let shiftGoal = 0; // Meta de unidades por turno
 
 // ------------------------------------------
@@ -88,6 +90,12 @@ function setupFirebaseListeners() {
     }, (error) => {
         console.error("Error leyendo productividad:", error);
         updateSyncStatus(false);
+    });
+
+    // Escuchar paradas en tiempo real
+    window.db.ref('downtime').on('value', (snapshot) => {
+        downtimeData = snapshot.val() || {};
+        if (document.getElementById('grafica-view')?.classList.contains('active')) renderDowntimeChart();
     });
 }
 
@@ -406,13 +414,15 @@ function initNavigation() {
                 document.getElementById(targetId).classList.add('active');
                 if (targetId === 'dashboard-view') renderDashboard();
                 if (targetId === 'grafica-view') renderChart();
-                if (targetId === 'historial-view' || targetId === 'tecnicos-view' || targetId === 'dashboard-view') {
+                if (targetId === 'historial-view' || targetId === 'tecnicos-view' || targetId === 'dashboard-view' || targetId === 'paradas-view') {
                     // Actualizar selectores de técnicos en todas las vistas
-                    ['hist-tech-filter', 'delete-tech-filter'].forEach(id => {
+                    ['hist-tech-filter', 'delete-tech-filter', 'downtime-tech-select'].forEach(id => {
                         const hf = document.getElementById(id);
                         if (hf) {
                             const cur = hf.value;
-                            hf.innerHTML = '<option value="">Todos</option>';
+                            hf.innerHTML = '<option value="" disabled selected>Selecciona técnico</option>';
+                            if (id !== 'downtime-tech-select') hf.innerHTML = '<option value="">Todos</option>';
+                            
                             appTechnicians.forEach(t => {
                                 const o = document.createElement('option');
                                 o.value = t.id; o.textContent = t.name;
@@ -505,13 +515,42 @@ async function submitEntry(techId, serials) {
     const day = new Date().toISOString().split('T')[0];
     const hour = autoDetectHour();
     const ts = new Date().toLocaleTimeString('es-DO', { hour12: false }).substring(0, 5);
+    const comment = document.getElementById('entry-comment')?.value || "";
 
     // Construir las nuevas entradas a agregar
-    const newEntries = serials.map(s => ({ serial: s, timestamp: ts }));
+    const newEntries = serials.map(s => ({ 
+        serial: s, 
+        timestamp: ts,
+        comment: comment 
+    }));
 
     // Usar push() para SUMAR al acumulado existente, nunca reemplazar
     await pushProductivityEntries(day, techId, hour, newEntries);
+    
+    // Limpiar comentario después de guardar
+    if (document.getElementById('entry-comment')) document.getElementById('entry-comment').value = '';
+    
     showSuccessToast();
+}
+
+async function submitDowntime(techId, minutes, cause, comment) {
+    const day = new Date().toISOString().split('T')[0];
+    const hour = autoDetectHour();
+    const ts = new Date().toLocaleTimeString('es-DO', { hour12: false }).substring(0, 5);
+    const safeHour = hour.replace(/:/g, '-').replace(/ /g, '_');
+
+    const entry = {
+        techId,
+        minutes,
+        cause,
+        comment,
+        timestamp: ts
+    };
+
+    if (window.db) {
+        await window.db.ref(`downtime/${day}/${safeHour}`).push(entry);
+    }
+    showToast("Parada registrada correctamente", "success");
 }
 
 function showToast(msg, type = 'success') {
@@ -621,6 +660,37 @@ function renderChart() {
     productivityChartInstance = new Chart(canvas.getContext('2d'), {
         type: 'bar',
         data: { labels: globalHours.map(h => h.split(' ')[0]), datasets },
+        options: { responsive: true, maintainAspectRatio: false }
+    });
+}
+
+function renderDowntimeChart() {
+    const canvas = document.getElementById('downtimeChart');
+    if (!canvas) return;
+    
+    const day = document.getElementById('filter-date-start')?.value || new Date().toISOString().split('T')[0];
+    const dataByHour = globalHours.map(h => {
+        const safeH = h.replace(/:/g, '-').replace(/ /g, '_');
+        const entries = downtimeData[day]?.[safeH] || {};
+        let totalMins = 0;
+        Object.values(entries).forEach(e => totalMins += (parseInt(e.minutes) || 0));
+        return totalMins;
+    });
+
+    if (downtimeChartInstance) downtimeChartInstance.destroy();
+    downtimeChartInstance = new Chart(canvas.getContext('2d'), {
+        type: 'line',
+        data: {
+            labels: globalHours.map(h => h.split(' ')[0]),
+            datasets: [{
+                label: 'Minutos de Parada',
+                data: dataByHour,
+                borderColor: '#ef4444',
+                backgroundColor: 'rgba(239, 68, 68, 0.1)',
+                fill: true,
+                tension: 0.3
+            }]
+        },
         options: { responsive: true, maintainAspectRatio: false }
     });
 }
@@ -814,8 +884,8 @@ function initAdmin() {
 // EXPORT
 // ------------------------------------------
 function exportToExcel() {
-    // Encabezado detallado: Incluye Serial y Hora Exacta
-    let csv = "\uFEFFFecha,Técnico,Franja Horaria,Serial,Hora Registro\n";
+    // Encabezado detallado: Incluye Serial, Hora Exacta y Comentario
+    let csv = "\uFEFFFecha,Técnico,Franja Horaria,Serial,Hora Registro,Comentario\n";
     
     Object.keys(productivityData).sort().reverse().forEach(d => {
         Object.keys(productivityData[d] || {}).forEach(tid => {
@@ -829,10 +899,10 @@ function exportToExcel() {
                 entries.forEach(entry => {
                     const serial = entry.serial || "Manual";
                     const timestamp = entry.timestamp || "--:--";
-                    // Limpiar la clave de la hora para el reporte
+                    const comment = (entry.comment || "").replace(/"/g, '""'); // Escapar comillas
                     const hourRange = h.replace(/--/g, ':').replace(/_-_/g, ' - ').replace(/-/g, ':');
                     
-                    csv += `"${d}","${techName}","${hourRange}","${serial}","${timestamp}"\n`;
+                    csv += `"${d}","${techName}","${hourRange}","${serial}","${timestamp}","${comment}"\n`;
                 });
             });
         });
@@ -896,8 +966,9 @@ function renderHistorial() {
                     <td>${day}</td>
                     <td><strong>${techName}</strong></td>
                     <td style="font-family:monospace; font-size:0.85rem;">${hourDisplay}</td>
-                    <td><span style="background:rgba(99,102,241,0.2); padding:3px 10px; border-radius:20px; font-weight:700;">${count}</span></td>
+                    <td><span style="background:rgba(99,102,241,0.2); padding:3px 10px; border-radius:20px; font-weight:700;">${items[0].serial || 'Manual'}</span></td>
                     <td style="color:${effColor}; font-weight:700;">${effText}</td>
+                    <td style="font-size:0.8rem; font-style:italic;">${items[0].comment || '-'}</td>
                 </tr>`);
             });
         });

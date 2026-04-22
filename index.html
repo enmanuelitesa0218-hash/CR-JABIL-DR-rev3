@@ -30,12 +30,9 @@
                 <button class="nav-btn" data-target="registro-view">
                     <i class="fa-solid fa-plus-circle"></i> Registrar Productividad
                 </button>
-                <button class="nav-btn" data-target="grafica-view">
-                    <i class="fa-solid fa-chart-bar"></i> Gráfica
-                </button>
-                <button class="nav-btn" data-target="historial-view">
-                    <i class="fa-solid fa-clock-rotate-left"></i> Historial
-                </button>
+                <button class="nav-btn" data-target="grafica-view"><i class="fa-solid fa-chart-simple"></i> Gráficas</button>
+                <button class="nav-btn" data-target="paradas-view"><i class="fa-solid fa-stopwatch"></i> Paradas</button>
+                <button class="nav-btn" data-target="historial-view"><i class="fa-solid fa-clock-rotate-left"></i> Historial</button>
                 <button class="nav-btn" data-target="tecnicos-view">
                     <i class="fa-solid fa-users-gear"></i> Gestionar Técnicos
                 </button>
@@ -198,6 +195,12 @@
                                     <input type="number" id="repairs-input" min="1" value="1" required>
                                     <button type="button" class="num-btn increase"><i class="fa-solid fa-plus"></i></button>
                                 </div>
+                            </div>
+
+                            <div class="form-group">
+                                <label for="entry-comment">Comentario / Nota (opcional):</label>
+                                <textarea id="entry-comment" placeholder="Ej: Tarjeta con retrabajo especial, revisión extra, etc." style="width: 100%; background: rgba(0,0,0,0.2); border: 1px solid var(--glass-border); color: #fff; padding: 12px; border-radius: var(--radius-md); min-height: 80px; resize: vertical;"></textarea>
+                            </div>
                                 
                             <button type="submit" class="btn-primary">
                                 <i class="fa-solid fa-floppy-disk"></i> Guardar Registro Manual
@@ -207,14 +210,57 @@
                 </section>
 
                  <section id="grafica-view" class="view">
-                    <div class="glass-panel" style="padding: 30px;">
-                        <h2>Rendimiento Global - Hora por Hora</h2>
-                        <p class="panel-desc">Suma de la productividad de todos los técnicos a lo largo del día.</p>
-                        <div style="position: relative; height: 50vh; width: 100%; margin-top: 20px;">
+                    <div class="glass-panel" style="padding: 30px; margin-bottom: 20px;">
+                        <h2><i class="fa-solid fa-chart-bar" style="color:var(--accent-secondary); margin-right:10px;"></i>Rendimiento por Técnico</h2>
+                        <div style="height: 400px; position: relative;">
                             <canvas id="productivityChart"></canvas>
                         </div>
                     </div>
+                    <div class="glass-panel" style="padding: 30px;">
+                        <h2><i class="fa-solid fa-stopwatch-20" style="color:#ef4444; margin-right:10px;"></i>Tiempo de Paradas (Minutos)</h2>
+                        <div style="height: 300px; position: relative;">
+                            <canvas id="downtimeChart"></canvas>
+                        </div>
+                    </div>
                  </section>
+
+                <!-- VISTA: PARADAS -->
+                <section id="paradas-view" class="view">
+                    <div class="glass-panel form-panel" style="max-width: 600px;">
+                        <h2><i class="fa-solid fa-stopwatch" style="color:#ef4444; margin-right:10px;"></i>Notificar Parada</h2>
+                        <p class="panel-desc">Registra tiempos muertos o paradas de línea.</p>
+                        
+                        <form id="parada-form">
+                            <div class="form-group">
+                                <label>Técnico que Reporta:</label>
+                                <select id="downtime-tech-select" required></select>
+                            </div>
+                            <div class="form-group">
+                                <label>Duración (Minutos):</label>
+                                <input type="number" id="downtime-minutes" min="1" placeholder="Ej: 15" required style="width: 100%; background: rgba(0,0,0,0.2); border: 1px solid var(--glass-border); color: #fff; padding: 12px; border-radius: var(--radius-md);">
+                            </div>
+                            <div class="form-group">
+                                <label>Causa / Motivo:</label>
+                                <select id="downtime-cause" required style="width: 100%; background: rgba(0,0,0,0.2); border: 1px solid var(--glass-border); color: #fff; padding: 12px; border-radius: var(--radius-md);">
+                                    <option value="" disabled selected>Selecciona una causa</option>
+                                    <option value="Falla de Máquina">Falla de Máquina</option>
+                                    <option value="Falta de Material">Falta de Material</option>
+                                    <option value="Reunión / Entrenamiento">Reunión / Entrenamiento</option>
+                                    <option value="Cambio de Modelo">Cambio de Modelo</option>
+                                    <option value="Falla Eléctrica">Falla Eléctrica</option>
+                                    <option value="Otro">Otro (Especificar en comentario)</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label>Comentario Adicional:</label>
+                                <textarea id="downtime-comment" placeholder="Detalles de la parada..." style="width: 100%; background: rgba(0,0,0,0.2); border: 1px solid var(--glass-border); color: #fff; padding: 12px; border-radius: var(--radius-md); min-height: 80px; resize: vertical;"></textarea>
+                            </div>
+                            <button type="submit" class="btn-danger" style="width: 100%; margin-top: 10px;">
+                                <i class="fa-solid fa-save"></i> Guardar Parada
+                            </button>
+                        </form>
+                    </div>
+                </section>
 
                 <!-- VISTA: HISTORIAL -->
                 <section id="historial-view" class="view">
@@ -242,7 +288,7 @@
                         </div>
                         <div class="table-container">
                             <table class="productivity-table">
-                                <thead><tr><th>Fecha</th><th>Técnico</th><th>Hora</th><th>Unidades</th><th>Efic.</th></tr></thead>
+                                 <thead><tr><th>Fecha</th><th>Técnico</th><th>Hora</th><th>Serial</th><th>Efic.</th><th>Comentario</th></tr></thead>
                                 <tbody id="historial-body">
                                     <tr><td colspan="5" style="text-align:center; color:var(--text-muted);">Cargando...</td></tr>
                                 </tbody>
