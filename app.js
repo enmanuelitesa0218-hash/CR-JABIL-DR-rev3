@@ -289,7 +289,6 @@ function updateKPIs() {
     // Calcular eficiencia promedio ponderada de todos los técnicos con meta
     let totalEffPct = 0;
     let techsWithGoal = 0;
-    const now = new Date();
     const hoursWorked = Math.max(0.5, now.getHours() + now.getMinutes() / 60 - 7);
     const hoursLeft = Math.max(0, 15 - now.getHours() - now.getMinutes() / 60);
     let teamProjection = 0;
@@ -620,18 +619,26 @@ function initForm() {
                     // Procesar WIP: Categoria por AssemblyNumber y WIP Category
                     const wipProcessed = {};
                     rows.forEach(row => {
-                        const assembly = row['AssemblyNumber'] || row['Assembly Number'] || 'Sin Assembly';
-                        const category = row['WIPCategory'] || row['WIP Category'] || row['Category'] || row['Status'] || 'Otros';
+                        // Función para buscar columna ignorando mayúsculas/minúsculas
+                        const getVal = (names) => {
+                            const key = Object.keys(row).find(k => names.some(n => k.toLowerCase().replace(/\s/g,'') === n.toLowerCase().replace(/\s/g,'')));
+                            return key ? row[key] : null;
+                        };
+
+                        const assembly = getVal(['AssemblyNumber', 'Assembly']) || 'Sin Assembly';
+                        const category = getVal(['WIPCategory', 'Category', 'Status', 'Wip_Category']) || 'Otros';
+                        const serial = getVal(['SerialNumber', 'Serial']);
                         
-                        // Normalizar categorías comunes
+                        // Normalizar categorías específicas solicitadas
                         let cat = category.toString().trim();
-                        if (/diag/i.test(cat)) cat = "Diagnóstico";
-                        else if (/repair/i.test(cat) || /repara/i.test(cat)) cat = "Repair";
-                        else if (/test/i.test(cat) || /prueba/i.test(cat)) cat = "Test";
+                        if (/diag/i.test(cat)) cat = "To Diag";
+                        else if (/repair/i.test(cat) || /repara/i.test(cat)) cat = "To Repair";
+                        else if (/test/i.test(cat) || /prueba/i.test(cat)) cat = "To Test";
+                        else cat = "Otros";
 
                         if (!wipProcessed[assembly]) wipProcessed[assembly] = {};
                         
-                        if (row['SerialNumber'] || row['Serial Number']) {
+                        if (serial) {
                             wipProcessed[assembly][cat] = (wipProcessed[assembly][cat] || 0) + 1;
                         }
                     });
@@ -888,15 +895,15 @@ function renderWipChart() {
     const canvas = document.getElementById('wipChart');
     if (!canvas) return;
 
-    // wipData ahora es { "ASSY1": { "Diagnóstico": 5, "Repair": 2 }, ... }
+    // wipData ahora es { "ASSY1": { "To Diag": 5, "To Repair": 2 }, ... }
     const assemblies = Object.keys(wipData);
-    const categories = ["Diagnóstico", "Repair", "Test", "Otros"];
+    const categories = ["To Diag", "To Repair", "To Test", "Otros"];
     
     const colors = {
-        "Diagnóstico": "rgba(59, 130, 246, 0.75)", // Azul
-        "Repair": "rgba(245, 158, 11, 0.75)",     // Naranja
-        "Test": "rgba(16, 185, 129, 0.75)",       // Verde
-        "Otros": "rgba(148, 163, 184, 0.5)"       // Gris
+        "To Diag": "rgba(59, 130, 246, 0.75)",   // Azul
+        "To Repair": "rgba(245, 158, 11, 0.75)", // Naranja
+        "To Test": "rgba(16, 185, 129, 0.75)",   // Verde
+        "Otros": "rgba(148, 163, 184, 0.5)"     // Gris
     };
 
     const datasets = categories.map(cat => ({
@@ -1256,7 +1263,6 @@ function renderHistorial() {
                 const items = productivityData[day][techId][hourKey];
                 if (!Array.isArray(items)) return;
 
-                const techGoal = parseInt(tech?.goal) || 0;
                 let effText = 'N/A';
                 let effColor = '#888';
                 if (techGoal > 0) {
