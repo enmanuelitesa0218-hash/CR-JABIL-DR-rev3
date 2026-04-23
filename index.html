@@ -12,6 +12,8 @@
     <!-- Chart.js -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.0.0"></script>
+    <!-- XLSX Library para procesar Excel -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 </head>
 <body>
     <div class="app-container">
@@ -95,9 +97,12 @@
                         </div>
 
                         <!-- KPI: SHIFT LEADER -->
-                        <div class="stat-card kpi-card-gold">
+                        <div class="stat-card kpi-card-gold" style="position: relative; overflow: hidden;">
+                            <div id="shift-leader-photo" style="position: absolute; right: 0; top: 0; width: 80px; height: 100%; background: rgba(255,255,255,0.1); display: flex; align-items: center; justify-content: center; overflow: hidden; border-left: 1px solid rgba(255,255,255,0.1);">
+                                <i class="fa-solid fa-user" style="font-size: 2rem; opacity: 0.3;"></i>
+                            </div>
                             <div class="stat-icon"><i class="fa-solid fa-crown"></i></div>
-                            <div class="stat-info">
+                            <div class="stat-info" style="position: relative; z-index: 2; padding-right: 60px;">
                                 <span class="stat-label">Líder de Turno</span>
                                 <span class="stat-value" id="shift-leader-name" style="font-size: 1.1rem; line-height: 1.2;">---</span>
                                 <small id="shift-leader-count" style="color: var(--text-muted); font-size: 0.75rem;">0 unidades</small>
@@ -214,14 +219,30 @@
 
                  <section id="grafica-view" class="view">
                     <div class="glass-panel" style="padding: 30px; margin-bottom: 20px;">
-                        <h2><i class="fa-solid fa-chart-bar" style="color:var(--accent-secondary); margin-right:10px;"></i>Rendimiento por Técnico</h2>
+                        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px;">
+                            <h2 style="margin:0;"><i class="fa-solid fa-chart-bar" style="color:var(--accent-secondary); margin-right:10px;"></i>Rendimiento por Técnico</h2>
+                            <div id="tech-totals-container" style="display:flex; gap:10px; flex-wrap:wrap;">
+                                <!-- Dinámico: Totales por técnico -->
+                            </div>
+                        </div>
                         <div style="height: 400px; position: relative;">
                             <canvas id="productivityChart"></canvas>
                         </div>
                     </div>
+
+                    <div class="glass-panel" style="padding: 30px; margin-bottom: 20px;">
+                        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:15px;">
+                            <h2 style="margin:0;"><i class="fa-solid fa-boxes-stacked" style="color:#10b981; margin-right:10px;"></i>WIP - Material Pendiente</h2>
+                            <span id="wip-last-update" style="font-size:0.75rem; color:var(--text-muted); background:var(--theme-alpha-05); padding:4px 10px; border-radius:10px;">Cargando reporte...</span>
+                        </div>
+                        <div style="height: 350px; position: relative;">
+                            <canvas id="wipChart"></canvas>
+                        </div>
+                    </div>
+
                     <div class="glass-panel" style="padding: 30px;">
-                        <h2><i class="fa-solid fa-stopwatch-20" style="color:#ef4444; margin-right:10px;"></i>Tiempo de Paradas (Minutos)</h2>
-                        <div style="height: 300px; position: relative;">
+                        <h2><i class="fa-solid fa-stopwatch-20" style="color:#ef4444; margin-right:10px;"></i>Detalle de Paradas por Técnico</h2>
+                        <div style="height: 400px; position: relative;">
                             <canvas id="downtimeChart"></canvas>
                         </div>
                     </div>
@@ -262,6 +283,31 @@
                                 <i class="fa-solid fa-save"></i> Guardar Parada
                             </button>
                         </form>
+                    </div>
+
+                    <!-- NUEVO: HISTORIAL DE PARADAS -->
+                    <div class="glass-panel" style="margin-top: 25px; padding: 25px;">
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+                            <h3 style="margin:0;"><i class="fa-solid fa-list-ul" style="color:var(--text-muted); margin-right:10px;"></i>Historial de Paradas (Hoy)</h3>
+                            <button onclick="renderDowntimeTable()" class="nav-btn" style="padding: 5px 12px; font-size: 0.8rem; margin:0;"><i class="fa-solid fa-rotate"></i> Actualizar</button>
+                        </div>
+                        <div class="table-container">
+                            <table class="productivity-table">
+                                <thead>
+                                    <tr>
+                                        <th>Hora</th>
+                                        <th>Técnico</th>
+                                        <th>Duración</th>
+                                        <th>Causa</th>
+                                        <th>Comentario</th>
+                                        <th>Acción</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="downtime-table-body">
+                                    <tr><td colspan="6" style="text-align:center; color:var(--text-muted); padding:20px;">No hay paradas registradas hoy.</td></tr>
+                                </tbody>
+                            </table>
+                        </div>
                     </div>
                 </section>
 
@@ -346,6 +392,23 @@
                                 <tbody id="tech-admin-body">
                                 </tbody>
                             </table>
+                        </div>
+
+                        <!-- GESTIÓN DE WIP -->
+                        <div style="margin-top: 40px; padding-top: 25px; border-top: 2px solid var(--accent-secondary);">
+                            <h3 style="color: var(--accent-secondary); margin-bottom: 5px;"><i class="fa-solid fa-file-excel" style="margin-right:8px;"></i>Carga de Reporte WIP</h3>
+                            <p class="panel-desc">Sube un archivo Excel (.xls o .xlsx) para actualizar el material pendiente.</p>
+                            
+                            <div class="glass-panel" style="padding: 20px; background: rgba(16, 185, 129, 0.05); border: 1px dashed #10b981;">
+                                <div style="display: flex; flex-direction: column; gap: 15px; align-items: center;">
+                                    <input type="file" id="wip-excel-input" accept=".xls,.xlsx" style="display:none;">
+                                    <label for="wip-excel-input" class="btn-primary" style="background:#10b981; width:auto; padding:10px 25px; cursor:pointer;">
+                                        <i class="fa-solid fa-cloud-arrow-up"></i> Seleccionar Archivo Excel
+                                    </label>
+                                    <div id="wip-upload-status" style="font-size: 0.85rem; color: var(--text-muted);">Ningún archivo seleccionado</div>
+                                    <small style="text-align: center; opacity: 0.7;">El sistema contará 'SerialNumber' y agrupará por 'AssemblyNumber'.</small>
+                                </div>
+                            </div>
                         </div>
 
                         <!-- MANTENIMIENTO DE DATOS -->

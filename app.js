@@ -11,10 +11,12 @@ const globalHours = [
 
 let appTechnicians = [];
 let productivityData = {};
-let downtimeData = {}; // Nuevo: Almacena paradas
+let downtimeData = {}; 
+let wipData = {}; // Nuevo: Datos de WIP desde Excel
 let productivityChartInstance = null;
-let downtimeChartInstance = null; // Nuevo: Gráfica de paradas
-let shiftGoal = 0; // Meta de unidades por turno
+let downtimeChartInstance = null; 
+let wipChartInstance = null; // Nuevo: Gráfica de WIP
+let shiftGoal = 0; 
 
 // ------------------------------------------
 // FIREBASE - Listeners en Tiempo Real
@@ -96,13 +98,34 @@ function setupFirebaseListeners() {
     // Escuchar paradas en tiempo real
     window.db.ref('downtime').on('value', (snapshot) => {
         downtimeData = snapshot.val() || {};
-        if (document.getElementById('grafica-view')?.classList.contains('active')) renderDowntimeChart();
+        if (document.getElementById('grafica-view')?.classList.contains('active')) {
+            renderDowntimeChart();
+            renderChart(); // Actualizar totales en productividad
+        }
+        if (document.getElementById('paradas-view')?.classList.contains('active')) renderDowntimeTable();
+    });
+
+    // Escuchar WIP en tiempo real
+    window.db.ref('wip').on('value', (snapshot) => {
+        const data = snapshot.val() || {};
+        wipData = data.counts || {};
+        const timestamp = data.updatedAt || null;
+        
+        localStorage.setItem('jabil_wip_data', JSON.stringify(data));
+        
+        const tsEl = document.getElementById('wip-last-update');
+        if (tsEl && timestamp) tsEl.textContent = `Actualizado: ${timestamp}`;
+        
+        if (document.getElementById('grafica-view')?.classList.contains('active')) renderWipChart();
     });
 }
 
 function loadLocalFallback() {
     appTechnicians = JSON.parse(localStorage.getItem('jabil_techs_list') || '[]');
     productivityData = JSON.parse(localStorage.getItem('jabil_proto_data') || '{}');
+    const cachedWip = JSON.parse(localStorage.getItem('jabil_wip_data') || '{}');
+    wipData = cachedWip.counts || {};
+    
     if (appTechnicians.length === 0) {
         appTechnicians = [{ id: "JB-001", name: "Técnico Demo", pin: "1234" }];
     }
@@ -212,8 +235,9 @@ function updateSyncStatus(online) {
 function updateKPIs() {
     const today = new Date().toISOString().split('T')[0];
     const monthPrefix = today.substring(0, 7);
+    const now = new Date();
 
-    let shiftLeader = { name: "---", count: 0 };
+    let shiftLeader = { name: "---", count: 0, photo: null };
     let monthLeader = { name: "---", count: 0, photo: null };
     let totalToday = 0;
     const dailyTotals = {};
@@ -238,7 +262,11 @@ function updateKPIs() {
     Object.keys(dailyTotals).forEach(tid => {
         if (dailyTotals[tid] > shiftLeader.count) {
             const t = appTechnicians.find(t => t.id === tid);
-            shiftLeader = { name: t ? t.name : tid, count: dailyTotals[tid] };
+            shiftLeader = { 
+                name: t ? t.name : tid, 
+                count: dailyTotals[tid],
+                photo: t ? t.photo : null
+            };
         }
     });
     Object.keys(monthlyTotals).forEach(tid => {
@@ -301,10 +329,17 @@ function updateKPIs() {
     set('month-leader-name', monthLeader.name);
     set('month-leader-count', `${monthLeader.count} unidades`);
 
-    // Actualizar foto del líder del mes
-    const photoContainer = document.getElementById('month-leader-photo');
-    if (photoContainer) {
-        photoContainer.innerHTML = monthLeader.photo 
+    // Actualizar fotos de líderes
+    const shiftPhotoContainer = document.getElementById('shift-leader-photo');
+    if (shiftPhotoContainer) {
+        shiftPhotoContainer.innerHTML = shiftLeader.photo 
+            ? `<img src="${shiftLeader.photo}" style="width:100%; height:100%; object-fit:cover;">`
+            : '<i class="fa-solid fa-user" style="font-size:2rem; opacity:0.3;"></i>';
+    }
+
+    const monthPhotoContainer = document.getElementById('month-leader-photo');
+    if (monthPhotoContainer) {
+        monthPhotoContainer.innerHTML = monthLeader.photo 
             ? `<img src="${monthLeader.photo}" style="width:100%; height:100%; object-fit:cover;">`
             : '<i class="fa-solid fa-user" style="font-size:2rem; opacity:0.3;"></i>';
     }
@@ -468,7 +503,9 @@ function initNavigation() {
                 if (targetId === 'grafica-view') {
                     renderChart();
                     renderDowntimeChart();
+                    renderWipChart();
                 }
+                if (targetId === 'paradas-view') renderDowntimeTable();
                 if (targetId === 'historial-view') renderHistorial();
             };
             if (targetId === 'tecnicos-view') window.showAdminAuthModal(action);
@@ -504,8 +541,14 @@ function initForm() {
         if (tech && tech.pin) {
             isAuth = true;
             showTechPinModal(tech,
-                () => { isAuth = false; document.getElementById('scanner-input')?.focus(); },
-                () => { isAuth = false; techSelect.value = ''; }
+                () => { 
+                    isAuth = false; 
+                    document.getElementById('scanner-input')?.focus(); 
+                },
+                () => { 
+                    isAuth = false; 
+                    techSelect.value = ''; 
+                }
             );
         }
     });
@@ -538,6 +581,77 @@ function initForm() {
             const qty = parseInt(numInput.value) || 1;
             await submitEntry(tid, Array(qty).fill("Manual"));
             numInput.value = 1;
+        };
+    }
+
+    const paradaForm = document.getElementById('parada-form');
+    if (paradaForm) {
+        paradaForm.onsubmit = async (e) => {
+            e.preventDefault();
+            const tid = document.getElementById('downtime-tech-select').value;
+            const mins = document.getElementById('downtime-minutes').value;
+            const cause = document.getElementById('downtime-cause').value;
+            const comment = document.getElementById('downtime-comment').value;
+
+            if (!tid) { alert("Selecciona un técnico"); return; }
+            await submitDowntime(tid, mins, cause, comment);
+            paradaForm.reset();
+            renderDowntimeTable();
+        };
+    }
+
+    // --- EXCEL WIP LOGIC ---
+    const wipInput = document.getElementById('wip-excel-input');
+    if (wipInput) {
+        wipInput.onchange = (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+            const status = document.getElementById('wip-upload-status');
+            status.textContent = `Procesando: ${file.name}...`;
+
+            const reader = new FileReader();
+            reader.onload = async (ev) => {
+                try {
+                    const data = new Uint8Array(ev.target.result);
+                    const workbook = XLSX.read(data, { type: 'array' });
+                    const firstSheet = workbook.SheetNames[0];
+                    const rows = XLSX.utils.sheet_to_json(workbook.Sheets[firstSheet]);
+
+                    // Procesar WIP: Categoria por AssemblyNumber y WIP Category
+                    const wipProcessed = {};
+                    rows.forEach(row => {
+                        const assembly = row['AssemblyNumber'] || row['Assembly Number'] || 'Sin Assembly';
+                        const category = row['WIPCategory'] || row['WIP Category'] || row['Category'] || row['Status'] || 'Otros';
+                        
+                        // Normalizar categorías comunes
+                        let cat = category.toString().trim();
+                        if (/diag/i.test(cat)) cat = "Diagnóstico";
+                        else if (/repair/i.test(cat) || /repara/i.test(cat)) cat = "Repair";
+                        else if (/test/i.test(cat) || /prueba/i.test(cat)) cat = "Test";
+
+                        if (!wipProcessed[assembly]) wipProcessed[assembly] = {};
+                        
+                        if (row['SerialNumber'] || row['Serial Number']) {
+                            wipProcessed[assembly][cat] = (wipProcessed[assembly][cat] || 0) + 1;
+                        }
+                    });
+
+                    if (window.db) {
+                        const payload = {
+                            counts: wipProcessed,
+                            updatedAt: new Date().toLocaleString('es-DO', { hour12: false })
+                        };
+                        await window.db.ref('wip').set(payload);
+                        showToast("WIP actualizado con éxito", "success");
+                        status.textContent = `Último archivo: ${file.name}`;
+                    }
+                } catch (err) {
+                    console.error("Error procesando Excel:", err);
+                    alert("Error procesando el archivo Excel. Asegúrate de que tenga las columnas SerialNumber y AssemblyNumber.");
+                    status.textContent = "Error en el archivo";
+                }
+            };
+            reader.readAsArrayBuffer(file);
         };
     }
 }
@@ -687,73 +801,185 @@ function renderDashboard() {
 // ------------------------------------------
 function renderChart() {
     const canvas = document.getElementById('productivityChart');
+    const totalsContainer = document.getElementById('tech-totals-container');
     if (!canvas) return;
-    const datasets = appTechnicians.map((tech, i) => ({
-        label: tech.name,
-        data: globalHours.map(h => getFilteredItems(tech.id, h).length),
-        backgroundColor: `hsla(${i * 50}, 70%, 55%, 0.75)`
-    }));
+
+    const datasets = appTechnicians.map((tech, i) => {
+        const hourlyData = globalHours.map(h => getFilteredItems(tech.id, h).length);
+        const total = hourlyData.reduce((a, b) => a + b, 0);
+        tech.currentTotal = total; // Guardar temporalmente
+        return {
+            label: tech.name,
+            data: hourlyData,
+            backgroundColor: `hsla(${i * 60}, 75%, 50%, 0.75)`
+        };
+    });
+
+    // Actualizar cuadritos de totales
+    if (totalsContainer) {
+        totalsContainer.innerHTML = appTechnicians.map((tech, i) => `
+            <div style="background:var(--bg-secondary); border-left:3px solid hsla(${i * 60}, 75%, 50%, 1); padding:5px 12px; border-radius:var(--radius-sm); font-size:0.8rem;">
+                <span style="opacity:0.7;">${tech.name}:</span> <strong style="color:var(--accent-secondary);">${tech.currentTotal || 0}</strong>
+            </div>
+        `).join('');
+    }
+
     if (productivityChartInstance) productivityChartInstance.destroy();
     productivityChartInstance = new Chart(canvas.getContext('2d'), {
         type: 'bar',
         data: { labels: globalHours.map(h => h.split(' ')[0]), datasets },
-        options: { responsive: true, maintainAspectRatio: false }
+        options: { 
+            responsive: true, 
+            maintainAspectRatio: false,
+            scales: { y: { beginAtZero: true } }
+        }
     });
 }
 
 function renderDowntimeChart() {
     const canvas = document.getElementById('downtimeChart');
-    if (!canvas) {
-        console.warn("Canvas 'downtimeChart' no encontrado.");
-        return;
-    }
+    if (!canvas) return;
     
-    // Obtener día actual o del filtro
-    const day = document.getElementById('filter-date')?.value || 
-                document.getElementById('hist-date-start')?.value || 
-                new Date().toISOString().split('T')[0];
+    const day = document.getElementById('filter-date-start')?.value || new Date().toISOString().split('T')[0];
+    const dayData = downtimeData[day] || {};
+    
+    const labels = [];
+    const minutes = [];
+    const colors = [];
 
-    const dataByHour = globalHours.map(h => {
-        const safeH = h.replace(/:/g, '-').replace(/ /g, '_');
-        const entries = downtimeData[day]?.[safeH] || {};
-        let totalMins = 0;
-        Object.values(entries).forEach(e => totalMins += (parseInt(e.minutes) || 0));
-        return totalMins;
+    // Recopilar todas las paradas del día
+    Object.keys(dayData).forEach(hourKey => {
+        Object.values(dayData[hourKey]).forEach(entry => {
+            const tech = appTechnicians.find(t => t.id === entry.techId);
+            const techName = tech ? tech.name : entry.techId;
+            labels.push(`${techName} | ${entry.cause} (${entry.timestamp})`);
+            minutes.push(parseInt(entry.minutes) || 0);
+            colors.push('#ef4444');
+        });
     });
 
-    if (downtimeChartInstance) {
-        downtimeChartInstance.destroy();
-    }
-
-    const ctx = canvas.getContext('2d');
-    downtimeChartInstance = new Chart(ctx, {
-        type: 'line',
+    if (downtimeChartInstance) downtimeChartInstance.destroy();
+    downtimeChartInstance = new Chart(canvas.getContext('2d'), {
+        type: 'bar',
         data: {
-            labels: globalHours.map(h => h.split(' ')[0]),
+            labels: labels,
             datasets: [{
                 label: 'Minutos de Parada',
-                data: dataByHour,
-                borderColor: '#ef4444',
-                backgroundColor: 'rgba(239, 68, 68, 0.2)',
-                borderWidth: 3,
-                fill: true,
-                tension: 0.4,
-                pointRadius: 4,
-                pointBackgroundColor: '#ef4444'
+                data: minutes,
+                backgroundColor: colors,
+                borderRadius: 5
             }]
+        },
+        options: {
+            indexAxis: 'y',
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: { display: false }
+            },
+            scales: {
+                x: { title: { display: true, text: 'Minutos' } }
+            }
+        }
+    });
+}
+
+function renderWipChart() {
+    const canvas = document.getElementById('wipChart');
+    if (!canvas) return;
+
+    // wipData ahora es { "ASSY1": { "Diagnóstico": 5, "Repair": 2 }, ... }
+    const assemblies = Object.keys(wipData);
+    const categories = ["Diagnóstico", "Repair", "Test", "Otros"];
+    
+    const colors = {
+        "Diagnóstico": "rgba(59, 130, 246, 0.75)", // Azul
+        "Repair": "rgba(245, 158, 11, 0.75)",     // Naranja
+        "Test": "rgba(16, 185, 129, 0.75)",       // Verde
+        "Otros": "rgba(148, 163, 184, 0.5)"       // Gris
+    };
+
+    const datasets = categories.map(cat => ({
+        label: cat,
+        data: assemblies.map(assy => wipData[assy][cat] || 0),
+        backgroundColor: colors[cat],
+        borderRadius: 4
+    }));
+
+    if (wipChartInstance) wipChartInstance.destroy();
+    wipChartInstance = new Chart(canvas.getContext('2d'), {
+        type: 'bar',
+        data: {
+            labels: assemblies,
+            datasets: datasets
         },
         options: {
             responsive: true,
             maintainAspectRatio: false,
             scales: {
-                y: {
-                    beginAtZero: true,
-                    title: { display: true, text: 'Minutos' }
-                }
+                x: { stacked: true, title: { display: true, text: 'Assembly Number' } },
+                y: { stacked: true, beginAtZero: true, title: { display: true, text: 'Unidades' } }
             },
             plugins: {
-                legend: { position: 'top' }
+                legend: { position: 'top' },
+                tooltip: { mode: 'index', intersect: false }
             }
+        }
+    });
+}
+
+// ------------------------------------------
+// DOWNTIME TABLE (History)
+// ------------------------------------------
+function renderDowntimeTable() {
+    const body = document.getElementById('downtime-table-body');
+    if (!body) return;
+
+    const day = new Date().toISOString().split('T')[0];
+    const dayData = downtimeData[day] || {};
+    const rows = [];
+
+    Object.keys(dayData).sort().reverse().forEach(hourKey => {
+        const hourEntries = dayData[hourKey] || {};
+        Object.keys(hourEntries).forEach(pushKey => {
+            const entry = hourEntries[pushKey];
+            const tech = appTechnicians.find(t => t.id === entry.techId);
+            const techName = tech ? tech.name : entry.techId;
+            const hourDisplay = hourKey.replace(/_/g, ' ').replace(/-/g, ':');
+
+            rows.push(`<tr>
+                <td style="font-family:monospace; font-weight:600;">${entry.timestamp || '--:--'} <small style="opacity:0.6">(${hourDisplay})</small></td>
+                <td><strong>${techName}</strong></td>
+                <td><span style="color:#ef4444; font-weight:700;">${entry.minutes} min</span></td>
+                <td><span style="background:rgba(239, 68, 68, 0.1); color:#ef4444; padding:2px 8px; border-radius:4px; font-size:0.8rem; font-weight:600;">${entry.cause}</span></td>
+                <td style="max-width:200px; overflow:hidden; text-overflow:ellipsis; font-size:0.85rem; font-style:italic;">${entry.comment || '-'}</td>
+                <td>
+                    <button onclick="deleteDowntimeEntry('${day}', '${hourKey}', '${pushKey}')" class="nav-btn btn-danger" style="padding:5px 10px; margin:0;"><i class="fa-solid fa-trash"></i></button>
+                </td>
+            </tr>`);
+        });
+    });
+
+    body.innerHTML = rows.length > 0 
+        ? rows.join('') 
+        : '<tr><td colspan="6" style="text-align:center; color:var(--text-muted); padding:20px;">No hay paradas registradas hoy.</td></tr>';
+}
+
+async function deleteDowntimeEntry(day, hourKey, pushKey) {
+    if (!confirm("¿Eliminar este registro de parada?")) return;
+    
+    // Validar con password de admin
+    window.showAdminAuthModal(async () => {
+        try {
+            if (window.db) {
+                await window.db.ref(`downtime/${day}/${hourKey}/${pushKey}`).remove();
+                showToast("Parada eliminada", "success");
+                renderDowntimeTable();
+            } else {
+                alert("Sin conexión a Firebase");
+            }
+        } catch (err) {
+            console.error("Error al borrar parada:", err);
         }
     });
 }
@@ -782,7 +1008,7 @@ function initAdmin() {
     const subBtn = document.getElementById('btn-add-tech');
     let editId = null;
 
-    const renderAdminTable = () => {
+    window.renderAdminTable = () => {
         const body = document.getElementById('tech-admin-body');
         if (!body) return;
         body.innerHTML = appTechnicians.map(tech => `
@@ -801,21 +1027,21 @@ function initAdmin() {
     };
 
     window.editTech = (id) => {
-        editId = id;
         const t = appTechnicians.find(t => t.id === id);
         if (!t) return;
+        editId = id;
         idIn.value = t.id; idIn.disabled = true;
         nameIn.value = t.name;
         pinIn.value = t.pin;
         document.getElementById('new-tech-goal').value = t.goal || '';
-        subBtn.innerHTML = '<i class="fa-solid fa-check"></i> Guardar';
+        subBtn.innerHTML = '<i class="fa-solid fa-check"></i> Guardar Cambios';
         nameIn.focus();
     };
 
     window.deleteTech = async (id) => {
         const t = appTechnicians.find(t => t.id === id);
         if (!t) return;
-        if (!confirm(`¿Eliminar a ${t.name}?`)) return;
+        if (!confirm(`¿Estás seguro de eliminar al técnico ${t.name}?`)) return;
         await deleteTechFromFirebase(id);
     };
 
